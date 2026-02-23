@@ -9,5 +9,5 @@ const FIREBASE_CONFIG = {
 };
 
 const ADMIN_EMAILS = [
-  "ostanmoy@gmail.com"   // ← put your actual email here
+  "ostanmoy@gmail.com"   //
 ];
