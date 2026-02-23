@@ -1,0 +1,27 @@
+[[redirects]]
+  from = "/"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/app"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/app.html"
+  to = "/app.html"
+  status = 200
+  conditions = {Role = ["authenticated"]}
+
+# Anyone trying to hit app.html without auth gets sent to login
+[[redirects]]
+  from = "/app.html"
+  to = "/index.html"
+  status = 302
+
+[build]
+  publish = "."
+
+[dev]
+  port = 8888
