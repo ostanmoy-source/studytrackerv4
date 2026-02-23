@@ -1,0 +1,1364 @@
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   SIMPLIFIED v4 - NO AUTH, JUST WORKS
+═══════════════════════════════════════════════════════════════ */
+let storageKey = 'focus_v4';
+let profiles = {};
+let currentProfile = 'Default';
+
+function pd() { return profiles[currentProfile]; }
+
+function blankProfile() {
+  return {
+    sessions: [], tasks: [], subjects: [], exams: [], links: [], notes: [],
+    goals: { daily: 120, weekly: 600 },
+    settings: { customFocus: 45, customBreak: 10 },
+    streak: 0, lastStudyDate: null, earnedBadges: []
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) {
+      const d = JSON.parse(raw);
+      profiles = d.profiles || { Default: blankProfile() };
+      currentProfile = d.currentProfile || 'Default';
+      if (!profiles[currentProfile]) profiles[currentProfile] = blankProfile();
+    } else {
+      profiles = { Default: blankProfile() };
+      currentProfile = 'Default';
+    }
+  } catch(e) { 
+    profiles = { Default: blankProfile() }; 
+  }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify({ profiles, currentProfile }));
+  } catch(e) {}
+}
+
+// Hide auth screen and loading overlay immediately
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('loadingOverlay').style.display = 'none';
+  
+  // Load data
+  loadState();
+  
+  // Set theme
+  const saved = localStorage.getItem('focusTheme') || 'dark';
+  setTheme(saved);
+  
+  // Initialize
+  setMode('p25');
+  refreshAll();
+  checkCrash();
+  setInterval(updateClock, 1000);
+  setInterval(rotateQuote, 30000);
+  updateClock();
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   TIMER
+═══════════════════════════════════════════════════════════════ */
+let tmr = {
+  mode: 'p25', phase: 'focus',
+  running: false, paused: false,
+  elapsed: 0, total: 25*60,
+  interval: null, sessionStart: null,
+  pomoCount: 0
+};
+
+let pendS = { focusRating: 3, energyRating: 3 };
+let mlRatings = { focus: 3, energy: 3 };
+
+const MODES = { p25:{focus:25,brk:5}, p50:{focus:50,brk:10} };
+
+function setMode(mode, btn) {
+  if (tmr.running) return;
+  tmr.mode = mode;
+  tmr.phase = 'focus';
+  tmr.elapsed = 0;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (mode === 'sw') {
+    tmr.total = Infinity;
+    updDisp(0); setPhaseLabel('STOPWATCH');
+  } else {
+    const mins = mode === 'custom' ? (pd().settings.customFocus || 45) : MODES[mode].focus;
+    tmr.total = mins * 60;
+    updDisp(0); setPhaseLabel('FOCUS');
+  }
+  updBar(); renderPomoDots();
+}
+
+function setPhaseLabel(t) {
+  document.getElementById('timerPhase').textContent = t;
+  document.getElementById('zenPhase').textContent = t;
+}
+
+function updDisp(elapsed) {
+  const rem = tmr.total === Infinity ? elapsed : Math.max(0, tmr.total - elapsed);
+  const t = `${String(Math.floor(rem/60)).padStart(2,'0')}:${String(rem%60).padStart(2,'0')}`;
+  document.getElementById('timerDisp').textContent = t;
+  document.getElementById('zenTimer').textContent = t;
+}
+
+function updBar() {
+  const pct = tmr.total === Infinity ? 100 : Math.max(0, 100*(1 - tmr.elapsed/tmr.total));
+  document.getElementById('timerBar').style.width = pct + '%';
+  document.getElementById('zenBar').style.width = pct + '%';
+}
+
+function renderPomoDots() {
+  const el = document.getElementById('pomoDots');
+  if (tmr.mode === 'sw' || tmr.mode === 'custom') { el.innerHTML = ''; return; }
+  el.innerHTML = Array.from({length:4},(_,i) => {
+    let cls = 'pomo-dot';
+    if (i < tmr.pomoCount) cls += ' done';
+    else if (i === tmr.pomoCount && tmr.phase === 'focus') cls += ' current';
+    return `<div class="${cls}"></div>`;
+  }).join('');
+}
+
+function toggleTimer() {
+  if (!tmr.running) {
+    tmr.running = true; tmr.paused = false;
+    tmr.sessionStart = new Date();
+    document.getElementById('startBtn').textContent = '⏸ Pause';
+    document.getElementById('zenIcon').textContent = '⏸';
+    document.getElementById('zenLbl').textContent = 'Pause';
+    document.getElementById('timerDisp').classList.add('running');
+    tmr.interval = setInterval(tick, 1000);
+  } else if (!tmr.paused) {
+    tmr.paused = true;
+    clearInterval(tmr.interval); tmr.interval = null;
+    document.getElementById('startBtn').textContent = '▶ Resume';
+    document.getElementById('zenIcon').textContent = '▶';
+    document.getElementById('zenLbl').textContent = 'Resume';
+    document.getElementById('timerDisp').classList.remove('running');
+    document.getElementById('timerDisp').classList.add('paused');
+  } else {
+    tmr.paused = false;
+    document.getElementById('startBtn').textContent = '⏸ Pause';
+    document.getElementById('zenIcon').textContent = '⏸';
+    document.getElementById('zenLbl').textContent = 'Pause';
+    document.getElementById('timerDisp').classList.remove('paused');
+    document.getElementById('timerDisp').classList.add('running');
+    tmr.interval = setInterval(tick, 1000);
+  }
+}
+
+function tick() {
+  tmr.elapsed++;
+  updDisp(tmr.elapsed); updBar();
+  if (tmr.total !== Infinity && tmr.elapsed >= tmr.total) phaseComplete();
+}
+
+function stopTimer() {
+  if (!tmr.running && tmr.elapsed === 0) return;
+  clearInterval(tmr.interval); tmr.interval = null;
+  const wasFocus = tmr.phase === 'focus';
+  const mins = Math.floor(tmr.elapsed / 60);
+  if (wasFocus && mins >= 1) promptSession(mins);
+  resetTimer();
+}
+
+function skipPhase() { stopTimer(); }
+
+function resetTimer() {
+  tmr.running = false; tmr.paused = false; tmr.elapsed = 0; tmr.phase = 'focus';
+  document.getElementById('startBtn').textContent = '▶ Start';
+  document.getElementById('zenIcon').textContent = '▶';
+  document.getElementById('zenLbl').textContent = 'Start';
+  document.getElementById('timerDisp').classList.remove('running','paused');
+  setPhaseLabel('FOCUS');
+  setMode(tmr.mode, null);
+}
+
+function phaseComplete() {
+  clearInterval(tmr.interval); tmr.interval = null;
+  tmr.running = false; tmr.paused = false;
+  beep();
+  if (tmr.phase === 'focus') {
+    const mins = Math.floor(tmr.elapsed / 60);
+    if (mins >= 1) promptSession(mins);
+    tmr.pomoCount = Math.min(4, tmr.pomoCount + 1);
+    tmr.phase = 'break';
+    setPhaseLabel('BREAK');
+    const brkMins = tmr.mode === 'custom' ? (pd().settings.customBreak||10) : (MODES[tmr.mode]?.brk || 5);
+    tmr.total = brkMins * 60;
+    notify(`Focus done! ${brkMins}m break 🎉`, 'success');
+  } else {
+    tmr.phase = 'focus';
+    setPhaseLabel('FOCUS');
+    const fMins = tmr.mode === 'custom' ? (pd().settings.customFocus||45) : (MODES[tmr.mode]?.focus || 25);
+    tmr.total = fMins * 60;
+    notify('Break over! Time to focus 💪', 'info');
+    if (tmr.pomoCount >= 4) { tmr.pomoCount = 0; notify('🏅 4 Pomodoros complete! Great work.', 'success'); }
+  }
+  tmr.elapsed = 0;
+  document.getElementById('startBtn').textContent = '▶ Start';
+  document.getElementById('zenIcon').textContent = '▶';
+  document.getElementById('zenLbl').textContent = 'Start';
+  document.getElementById('timerDisp').classList.remove('running','paused');
+  updDisp(0); updBar(); renderPomoDots();
+}
+
+function promptSession(mins) {
+  pendS.durationMinutes = mins;
+  pendS.subject = document.getElementById('curSubject').value;
+  pendS.topic = document.getElementById('curTopic').value;
+  pendS.type = document.getElementById('curType').value || 'General';
+  pendS.startTime = tmr.sessionStart ? tmr.sessionStart.toISOString() : new Date().toISOString();
+  document.getElementById('sm_subject').value = pendS.subject || '';
+  document.getElementById('sm_topic').value = pendS.topic || '';
+  document.getElementById('sm_type').value = pendS.type || 'General';
+  openModal('sessionModal');
+}
+
+function rate(type, val) {
+  if (type === 'focus') {
+    pendS.focusRating = val;
+    document.querySelectorAll('#sm_focus .r-btn').forEach((b,i) => b.classList.toggle('sel', i+1===val));
+  } else {
+    pendS.energyRating = val;
+    document.querySelectorAll('#sm_energy .r-btn').forEach((b,i) => b.classList.toggle('sel', i+1===val));
+  }
+}
+
+function rateML(type, val) {
+  mlRatings[type] = val;
+  const id = type === 'focus' ? 'ml_focus' : 'ml_energy';
+  document.querySelectorAll(`#${id} .r-btn`).forEach((b,i) => b.classList.toggle('sel', i+1===val));
+}
+
+function saveSession(skip) {
+  const subject = document.getElementById('sm_subject').value || pendS.subject || 'General';
+  const topic = document.getElementById('sm_topic').value || pendS.topic || '';
+  const type = document.getElementById('sm_type').value || pendS.type || 'General';
+  const notes = document.getElementById('sm_notes').value || '';
+  const session = {
+    id: Date.now(),
+    date: new Date().toISOString().split('T')[0],
+    startTime: pendS.startTime || new Date().toISOString(),
+    durationMinutes: pendS.durationMinutes || 0,
+    subject, topic, type,
+    focusRating: pendS.focusRating || 3,
+    energyRating: pendS.energyRating || 3,
+    notes,
+    hour: new Date().getHours()
+  };
+  session.productiveMinutes = Math.round(session.durationMinutes * session.focusRating / 5);
+  pd().sessions.push(session);
+  updateStreak();
+  saveState();
+  checkBadges();
+  closeModal('sessionModal');
+  document.getElementById('sm_notes').value = '';
+  pendS = { focusRating: 3, energyRating: 3 };
+  refreshAll();
+  notify(`Session logged! ${session.durationMinutes}m of ${subject} 📚`, 'success');
+}
+
+function saveManualSession() {
+  const date = document.getElementById('ml_date').value || new Date().toISOString().split('T')[0];
+  const subject = document.getElementById('ml_subject').value || 'General';
+  const topic = document.getElementById('ml_topic').value || '';
+  const duration = parseInt(document.getElementById('ml_duration').value) || 0;
+  const type = document.getElementById('ml_type').value || 'General';
+  const notes = document.getElementById('ml_notes').value || '';
+  if (duration < 1) { notify('Enter a duration!', 'info'); return; }
+  const session = {
+    id: Date.now(),
+    date, startTime: date + 'T00:00:00.000Z',
+    durationMinutes: duration,
+    subject, topic, type,
+    focusRating: mlRatings.focus || 3,
+    energyRating: mlRatings.energy || 3,
+    notes, hour: 12, manual: true
+  };
+  session.productiveMinutes = Math.round(duration * session.focusRating / 5);
+  pd().sessions.push(session);
+  updateStreak();
+  saveState();
+  checkBadges();
+  closeModal('manualModal');
+  refreshAll();
+  notify(`Manual session added! ${duration}m of ${subject}`, 'success');
+}
+
+function updateStreak() {
+  const today = new Date().toISOString().split('T')[0];
+  const sessions = pd().sessions;
+  if (!sessions.some(s => s.date === today)) return;
+  if (!pd().lastStudyDate) {
+    pd().streak = 1;
+  } else {
+    const diff = Math.floor((new Date(today) - new Date(pd().lastStudyDate)) / 86400000);
+    if (diff === 1) pd().streak++;
+    else if (diff > 1) pd().streak = 1;
+  }
+  pd().lastStudyDate = today;
+  document.getElementById('streakNum').textContent = pd().streak;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TASKS
+═══════════════════════════════════════════════════════════════ */
+function qaAdd() {
+  const txt = document.getElementById('qaInput').value.trim();
+  if (!txt) return;
+  addTask(txt, document.getElementById('qaPri').value, document.getElementById('qaSubj').value, '');
+  document.getElementById('qaInput').value = '';
+}
+
+function addTaskFull() {
+  const txt = document.getElementById('t_text').value.trim();
+  if (!txt) return;
+  addTask(txt, document.getElementById('t_pri').value, document.getElementById('t_subj').value, document.getElementById('t_due').value);
+  document.getElementById('t_text').value = '';
+}
+
+function addTask(text, priority='medium', subject='', dueDate='') {
+  pd().tasks.unshift({ id: Date.now(), text, priority, subject, dueDate, done: false, createdAt: new Date().toISOString() });
+  saveState(); refreshTasks();
+  notify('Task added!', 'info');
+}
+
+function toggleTask(id) {
+  const t = pd().tasks.find(t => t.id === id);
+  if (!t) return;
+  t.done = !t.done;
+  if (t.done) t.doneAt = new Date().toISOString();
+  saveState(); refreshTasks(); checkBadges();
+}
+
+function deleteTask(id) {
+  pd().tasks = pd().tasks.filter(t => t.id !== id);
+  saveState(); refreshTasks();
+}
+
+function makeTaskEl(task) {
+  const el = document.createElement('div');
+  el.className = 'task-item' + (task.done ? ' done' : '');
+  el.innerHTML = `
+    <div class="task-check ${task.done?'checked':''}" onclick="toggleTask(${task.id})"></div>
+    <div class="pdot ${task.priority}"></div>
+    <div style="flex:1">
+      <div class="task-text">${esc(task.text)}</div>
+      ${task.subject||task.dueDate ? `<div class="task-sub">${task.subject?esc(task.subject):''}${task.subject&&task.dueDate?' · ':''}${task.dueDate?fmtDate(task.dueDate):''}</div>` : ''}
+    </div>
+    <button class="task-del" onclick="deleteTask(${task.id})">✕</button>`;
+  return el;
+}
+
+function refreshTasks() {
+  const pending = pd().tasks.filter(t => !t.done);
+  const done = pd().tasks.filter(t => t.done);
+
+  const fill = (id, items, emptyMsg) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    if (items.length === 0) { el.innerHTML = `<div class="empty"><div class="empty-icon">✅</div>${emptyMsg}</div>`; return; }
+    items.forEach(t => el.appendChild(makeTaskEl(t)));
+  };
+
+  fill('dashTaskList', pending.slice(0,5), 'No pending tasks!');
+  fill('allTasksList', pending, 'No pending tasks!');
+  fill('doneTasksList', done.slice(0,10), 'Complete tasks to see them here');
+
+  const due48 = document.getElementById('due48List');
+  if (due48) {
+    const cutoff = new Date(Date.now() + 48*3600000);
+    const upcoming = pending.filter(t => t.dueDate && new Date(t.dueDate+'T23:59:59') <= cutoff);
+    due48.innerHTML = '';
+    if (!upcoming.length) { due48.innerHTML = '<div style="font-size:12px;color:var(--text3)">None due soon</div>'; }
+    else upcoming.forEach(t => due48.appendChild(makeTaskEl(t)));
+  }
+
+  const ptl = document.getElementById('plannerTasks');
+  if (ptl) {
+    const sorted = pending.filter(t=>t.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+    ptl.innerHTML = '';
+    if (!sorted.length) ptl.innerHTML = '<div class="empty"><div class="empty-icon">📅</div>No tasks with due dates</div>';
+    else sorted.forEach(t => ptl.appendChild(makeTaskEl(t)));
+  }
+
+  const pc = document.getElementById('pendCnt');
+  if (pc) pc.textContent = pending.length;
+
+  const total = pd().tasks.length, doneCount = done.length;
+  sEl('taskGT', `${doneCount}/${total}`);
+  styleEl('taskGB', `width:${total?doneCount/total*100:0}%`);
+
+  refreshSubjectDrops();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SUBJECTS
+═══════════════════════════════════════════════════════════════ */
+let pickedColor = '#e8a832';
+
+function pickColor(c, el) {
+  pickedColor = c;
+  document.querySelectorAll('#colorPick .r-btn').forEach(b => b.style.opacity = '.5');
+  el.style.opacity = '1';
+}
+
+function saveSubject() {
+  const name = document.getElementById('ns_name').value.trim();
+  if (!name) return;
+  pd().subjects.push({ id: Date.now(), name, color: pickedColor });
+  document.getElementById('ns_name').value = '';
+  closeModal('addSubjectModal');
+  saveState(); refreshSubjects(); refreshSubjectDrops();
+  notify(`Subject "${name}" added!`, 'success');
+}
+
+function refreshSubjects() {
+  const c = document.getElementById('subjectCards');
+  if (!c) return;
+  c.innerHTML = '';
+  if (!pd().subjects.length) { c.innerHTML = '<div class="empty card"><div class="empty-icon">📚</div>Add your first subject</div>'; return; }
+  const maxMins = Math.max(...pd().subjects.map(s => pd().sessions.filter(x=>x.subject===s.name).reduce((a,x)=>a+x.durationMinutes,0)), 1);
+  pd().subjects.forEach(s => {
+    const sess = pd().sessions.filter(x => x.subject === s.name);
+    const mins = sess.reduce((a,x)=>a+x.durationMinutes,0);
+    const avgF = sess.length ? (sess.reduce((a,x)=>a+x.focusRating,0)/sess.length).toFixed(1) : '—';
+    const el = document.createElement('div');
+    el.className = 'subject-card';
+    el.style.setProperty('--subject-color', s.color);
+    el.innerHTML = `
+      <div class="subject-name">${esc(s.name)}</div>
+      <div class="s-stats">
+        <div class="s-stat"><strong>${fmtMins(mins)}</strong> studied</div>
+        <div class="s-stat"><strong>${sess.length}</strong> sessions</div>
+        <div class="s-stat"><strong>${avgF}</strong> avg focus</div>
+      </div>
+      <div class="s-bar"><div class="s-bar-fill" style="width:${mins/maxMins*100}%;background:${s.color}"></div></div>
+      <div style="text-align:right;margin-top:9px">
+        <button class="btn btn-ghost btn-sm" onclick="delSubject(${s.id})" style="color:var(--red);border-color:var(--red)">Remove</button>
+      </div>`;
+    c.appendChild(el);
+  });
+}
+
+function delSubject(id) {
+  pd().subjects = pd().subjects.filter(s => s.id !== id);
+  saveState(); refreshSubjects(); refreshSubjectDrops();
+}
+
+function refreshSubjectDrops() {
+  ['curSubject','qaSubj','t_subj','ml_subject','sm_subject','note_subj'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    const placeholder = id === 'curSubject' ? 'Subject…' : id === 'sm_subject' ? '' : 'Subject…';
+    el.innerHTML = `<option value="">${placeholder}</option>` +
+      pd().subjects.map(s => `<option value="${esc(s.name)}" ${s.name===cur?'selected':''}>${esc(s.name)}</option>`).join('');
+  });
+}
+
+function onSubjectChange() {
+  pd().lastSubject = document.getElementById('curSubject').value;
+  updateZenTask();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NOTES (simplified)
+═══════════════════════════════════════════════════════════════ */
+let noteTags = [];
+let editingNoteId = null;
+
+function noteFmt(cmd) {
+  const ed = document.getElementById('noteEditor');
+  ed.focus();
+  if (cmd === 'h2') {
+    document.execCommand('formatBlock', false, '<h3>');
+  } else if (cmd === 'code') {
+    document.execCommand('insertHTML', false, '<code style="background:var(--bg4);padding:2px 5px;border-radius:3px;font-family:var(--font-mono);font-size:12px">&nbsp;</code>');
+  } else if (cmd === 'hr') {
+    document.execCommand('insertHTML', false, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">');
+  } else {
+    document.execCommand(cmd, false, null);
+  }
+}
+
+function addNoteTag() {
+  const v = document.getElementById('noteTagInput').value.trim();
+  if (!v || noteTags.includes(v)) return;
+  noteTags.push(v);
+  document.getElementById('noteTagInput').value = '';
+  renderNoteTagsDisplay();
+}
+
+function renderNoteTagsDisplay() {
+  document.getElementById('noteTagsDisplay').innerHTML = noteTags.map((t,i) =>
+    `<span class="note-tag">${esc(t)}<span class="note-tag-del" onclick="removeNoteTag(${i})">✕</span></span>`
+  ).join('');
+}
+
+function removeNoteTag(i) { noteTags.splice(i,1); renderNoteTagsDisplay(); }
+
+function clearNoteEditor() {
+  document.getElementById('noteEditor').innerHTML = '';
+  document.getElementById('note_title').value = '';
+  noteTags = [];
+  renderNoteTagsDisplay();
+  editingNoteId = null;
+}
+
+function saveNote() {
+  const title = document.getElementById('note_title').value.trim() || 'Untitled';
+  const content = document.getElementById('noteEditor').innerHTML;
+  const subject = document.getElementById('note_subj').value;
+  if (!content || content === '<br>') { notify('Write something first!', 'info'); return; }
+
+  if (editingNoteId) {
+    const n = pd().notes.find(n => n.id === editingNoteId);
+    if (n) { n.title = title; n.content = content; n.subject = subject; n.tags = [...noteTags]; n.updatedAt = new Date().toISOString(); }
+  } else {
+    pd().notes.unshift({ id: Date.now(), title, content, subject, tags: [...noteTags], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  }
+  saveState(); clearNoteEditor(); renderNotes();
+  notify('Note saved!', 'success');
+}
+
+function renderNotes() {
+  const el = document.getElementById('notesList');
+  if (!el) return;
+  const q = (document.getElementById('noteSearch')?.value || '').toLowerCase();
+  const notes = pd().notes.filter(n => !q || n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q));
+  el.innerHTML = '';
+  if (!notes.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📝</div>No notes yet</div>'; return; }
+  notes.forEach(n => {
+    const div = document.createElement('div');
+    div.className = 'note-card';
+    div.innerHTML = `
+      <div class="note-card-title">${esc(n.title)}</div>
+      <div class="note-card-preview">${n.content.replace(/<[^>]*>/g,' ')}</div>
+      <div class="note-card-meta">${n.subject?esc(n.subject)+' · ':''}${fmtDate(n.updatedAt?.split('T')[0]||n.createdAt?.split('T')[0]||'')}</div>`;
+    div.onclick = () => viewNote(n.id);
+    el.appendChild(div);
+  });
+}
+
+function viewNote(id) {
+  const n = pd().notes.find(n => n.id === id);
+  if (!n) return;
+  const v = document.getElementById('noteViewer');
+  v.style.display = 'block';
+  v.style.marginTop = '14px';
+  document.getElementById('noteViewTitle').textContent = n.title;
+  document.getElementById('noteViewBody').innerHTML = n.content;
+  document.getElementById('noteViewTags').innerHTML = n.tags.map(t => `<span class="note-tag">${esc(t)}</span>`).join('');
+  v.scrollIntoView({ behavior: 'smooth' });
+  editingNoteId = id;
+}
+
+function editNote() {
+  if (!editingNoteId) return;
+  const n = pd().notes.find(n => n.id === editingNoteId);
+  if (!n) return;
+  document.getElementById('note_title').value = n.title;
+  document.getElementById('noteEditor').innerHTML = n.content;
+  document.getElementById('note_subj').value = n.subject || '';
+  noteTags = [...n.tags];
+  renderNoteTagsDisplay();
+  document.getElementById('noteViewer').style.display = 'none';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  notify('Editing note — save to update', 'info');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXAMS
+═══════════════════════════════════════════════════════════════ */
+function saveExam() {
+  const name = document.getElementById('ne_name').value.trim();
+  const date = document.getElementById('ne_date').value;
+  if (!name || !date) return;
+  pd().exams.push({ id: Date.now(), name, date });
+  document.getElementById('ne_name').value = '';
+  document.getElementById('ne_date').value = '';
+  closeModal('addExamModal');
+  saveState(); refreshExams();
+  notify('Exam added!', 'success');
+}
+
+function refreshExams() {
+  const el = document.getElementById('examList');
+  if (!el) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const sorted = [...pd().exams].sort((a,b)=>a.date.localeCompare(b.date));
+  if (!sorted.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📅</div>No exams added yet</div>'; return; }
+  el.innerHTML = sorted.map(e => {
+    const d = new Date(e.date+'T00:00:00');
+    const diff = Math.ceil((d-today)/86400000);
+    return `<div class="exam-item">
+      <div><div class="exam-name">${esc(e.name)}</div><div class="exam-date">${fmtDate(e.date)}</div></div>
+      <div style="text-align:right;display:flex;align-items:center;gap:10px">
+        <div><div class="exam-days ${diff<=7?'urgent':''}">${diff<0?'PAST':diff}</div><div class="exam-days-lbl">${diff>=0?'days left':''}</div></div>
+        <button class="task-del" style="opacity:1" onclick="delExam(${e.id})">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function delExam(id) { pd().exams = pd().exams.filter(e=>e.id!==id); saveState(); refreshExams(); }
+
+/* ═══════════════════════════════════════════════════════════════
+   LINKS
+═══════════════════════════════════════════════════════════════ */
+function saveLink() {
+  const name = document.getElementById('nl_name').value.trim();
+  const url = document.getElementById('nl_url').value.trim();
+  if (!name||!url) return;
+  pd().links.push({ id: Date.now(), name, url });
+  document.getElementById('nl_name').value = '';
+  document.getElementById('nl_url').value = '';
+  closeModal('addLinkModal');
+  saveState(); refreshLinks();
+}
+
+function refreshLinks() {
+  const el = document.getElementById('linksList');
+  if (!el) return;
+  if (!pd().links.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">🔗</div>Add links to resources…</div>'; return; }
+  el.innerHTML = pd().links.map(l =>
+    `<a href="${esc(l.url)}" target="_blank" rel="noopener" class="link-item">
+      <div><div class="link-name">${esc(l.name)}</div><div class="link-url">${esc(l.url.replace(/^https?:\/\//,'').slice(0,50))}</div></div>
+      <span style="color:var(--text3)">↗</span>
+    </a>`
+  ).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DASHBOARD STATS
+═══════════════════════════════════════════════════════════════ */
+function refreshDashboard() {
+  const today = new Date().toISOString().split('T')[0];
+  const todaySess = pd().sessions.filter(s=>s.date===today);
+  const todayMins = todaySess.reduce((a,s)=>a+s.durationMinutes,0);
+  const todayProd = todaySess.reduce((a,s)=>a+s.productiveMinutes,0);
+
+  const now = new Date();
+  const dow = (now.getDay()+6)%7;
+  const wStart = new Date(now); wStart.setDate(now.getDate()-dow); wStart.setHours(0,0,0,0);
+  const weekMins = pd().sessions.filter(s=>new Date(s.date)>=wStart).reduce((a,s)=>a+s.durationMinutes,0);
+
+  sEl('todayHrs', fmtMins(todayMins));
+  sEl('todaySess', todaySess.length);
+  sEl('weekHrs', fmtMinsShort(weekMins));
+  sEl('prodMin', fmtMins(todayProd));
+  sEl('streakNum', pd().streak||0);
+
+  const dg = pd().goals.daily||120, wg = pd().goals.weekly||600;
+  const dp = Math.min(100,Math.round(todayMins/dg*100));
+  const wp = Math.min(100,Math.round(weekMins/wg*100));
+  sEl('dailyGT',`${todayMins}/${dg}m`);
+  sEl('weeklyGT',`${weekMins}/${wg}m`);
+  styleEl('dailyGB',`width:${dp}%`);
+  styleEl('weeklyGB',`width:${wp}%`);
+  sEl('ringPct',dp+'%');
+  const off = 251.33 - (dp/100*251.33);
+  const rc = document.getElementById('ringCircle');
+  if (rc) rc.style.strokeDashoffset = off;
+
+  buildWeeklyReview();
+
+  const gs = document.getElementById('goalsSummary');
+  if (gs) {
+    gs.innerHTML = `
+      <div class="goal-item"><div class="goal-hd"><span class="goal-name">Today</span><span class="goal-txt">${fmtMins(todayMins)} / ${dg}m</span></div><div class="goal-bar"><div class="goal-fill" style="width:${dp}%;background:var(--accent)"></div></div></div>
+      <div class="goal-item"><div class="goal-hd"><span class="goal-name">This Week</span><span class="goal-txt">${fmtMins(weekMins)} / ${wg}m</span></div><div class="goal-bar"><div class="goal-fill" style="width:${wp}%;background:var(--blue)"></div></div></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-size:13px;color:var(--text2);line-height:2">
+        <div>🔥 Streak: <strong style="color:var(--accent)">${pd().streak||0} days</strong></div>
+        <div>📚 Total Sessions: <strong style="color:var(--text)">${pd().sessions.length}</strong></div>
+        <div>⏱ Total Studied: <strong style="color:var(--text)">${fmtMins(pd().sessions.reduce((a,s)=>a+s.durationMinutes,0))}</strong></div>
+        <div>🧠 Productive: <strong style="color:var(--accent)">${fmtMins(pd().sessions.reduce((a,s)=>a+s.productiveMinutes,0))}</strong></div>
+      </div>`;
+  }
+}
+
+function buildWeeklyReview() {
+  const el = document.getElementById('weeklyReview');
+  if (!el) return;
+  const now = new Date();
+  const dow = (now.getDay()+6)%7;
+  const wStart = new Date(now); wStart.setDate(now.getDate()-dow); wStart.setHours(0,0,0,0);
+  const pStart = new Date(wStart); pStart.setDate(wStart.getDate()-7);
+
+  const thisWeek = pd().sessions.filter(s=>new Date(s.date)>=wStart);
+  const lastWeek = pd().sessions.filter(s=>{ const d=new Date(s.date); return d>=pStart && d<wStart; });
+  const thisMins = thisWeek.reduce((a,s)=>a+s.durationMinutes,0);
+  const lastMins = lastWeek.reduce((a,s)=>a+s.durationMinutes,0);
+  const thisProductive = thisWeek.reduce((a,s)=>a+s.productiveMinutes,0);
+  const change = lastMins>0 ? Math.round((thisMins-lastMins)/lastMins*100) : null;
+  const subjects = [...new Set(thisWeek.map(s=>s.subject||'General'))];
+  const topSubj = subjects.length ? subjects.reduce((a,b)=> {
+    const am = thisWeek.filter(s=>(s.subject||'General')===a).reduce((x,s)=>x+s.durationMinutes,0);
+    const bm = thisWeek.filter(s=>(s.subject||'General')===b).reduce((x,s)=>x+s.durationMinutes,0);
+    return am>bm?a:b;
+  }) : null;
+
+  if (thisMins === 0) { el.innerHTML = '<div class="review-headline">No sessions this week yet.</div><div class="review-body">Start a timer to begin tracking your progress!</div>'; return; }
+
+  const changeStr = change === null ? '' : change > 0
+    ? ` — <span class="review-highlight">↑${change}% vs last week</span>`
+    : change < 0
+    ? ` — <span style="color:var(--red)">↓${Math.abs(change)}% vs last week</span>`
+    : ' — Same as last week';
+
+  el.innerHTML = `
+    <div class="review-headline">This week: <span style="color:var(--accent)">${fmtMins(thisMins)}</span>${changeStr}</div>
+    <div class="review-body" style="margin-top:6px">
+      ${thisWeek.length} session${thisWeek.length!==1?'s':''} &nbsp;·&nbsp; 
+      <span class="review-highlight">${fmtMins(thisProductive)}</span> productive minutes &nbsp;·&nbsp;
+      ${topSubj ? `Most studied: <span class="review-highlight">${esc(topSubj)}</span>` : ''}
+      ${(pd().streak||0)>0 ? ` &nbsp;·&nbsp; 🔥 ${pd().streak}-day streak` : ''}
+    </div>`;
+}
+
+function refreshLog() {
+  const el = document.getElementById('logBody');
+  if (!el) return;
+  if (!pd().sessions.length) {
+    el.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:22px">No sessions yet. Complete a timer session or add one manually.</td></tr>';
+    return;
+  }
+  el.innerHTML = [...pd().sessions].reverse().map(s => `
+    <tr class="log-row" onclick="toggleLogRow(${s.id})">
+      <td style="color:var(--text)">${s.date}</td>
+      <td style="color:var(--accent)">${esc(s.subject||'—')}</td>
+      <td>${esc(s.topic||'—')}</td>
+      <td><span class="type-badge">${esc(s.type||'General')}</span></td>
+      <td style="font-family:var(--font-mono)">${s.durationMinutes}m</td>
+      <td><span class="focus-stars">${'★'.repeat(s.focusRating)}</span></td>
+      <td><span class="focus-stars" style="color:var(--green)">${'★'.repeat(s.energyRating)}</span></td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-family:var(--font-mono);color:var(--text2)">${s.productiveMinutes}m</span>
+          <button onclick="event.stopPropagation();deleteSession(${s.id})"
+            style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;transition:all .2s"
+            onmouseover="this.style.color='#e86868'" onmouseout="this.style.color='var(--text3)'">✕</button>
+        </div>
+      </td>
+    </tr>
+    <tr class="log-expand" id="expand-${s.id}">
+      <td colspan="8">
+        ${s.notes ? `<div style="margin-bottom:6px"><strong style="color:var(--text)">Notes:</strong> ${esc(s.notes)}</div>` : '<em style="color:var(--text3)">No notes</em>'}
+        ${s.manual ? '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text3);background:var(--bg4);padding:2px 7px;border-radius:100px">manually added</span>' : ''}
+        <div style="margin-top:6px;font-size:11px;color:var(--text3)">
+          Started: ${s.startTime ? new Date(s.startTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—'}
+          &nbsp;·&nbsp; Hour: ${s.hour ?? '—'}:00
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function deleteSession(id) {
+  if (!confirm('Delete this session? This cannot be undone.')) return;
+  pd().sessions = pd().sessions.filter(s => s.id !== id);
+  saveState(); refreshAll();
+  notify('Session deleted.', 'info');
+}
+
+function toggleLogRow(id) {
+  const el = document.getElementById('expand-'+id);
+  if (el) el.classList.toggle('open');
+}
+
+function refreshWeekPlanner() {
+  const el = document.getElementById('weekPlanner');
+  if (!el) return;
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const now = new Date();
+  const dow = (now.getDay()+6)%7;
+  el.innerHTML = days.map((day,i) => {
+    const d = new Date(now); d.setDate(now.getDate()-dow+i);
+    const key = d.toISOString().split('T')[0];
+    const mins = pd().sessions.filter(s=>s.date===key).reduce((a,s)=>a+s.durationMinutes,0);
+    const isToday = i===dow;
+    const pct = Math.min(100, mins/(pd().goals.daily||120)*100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="width:28px;font-family:var(--font-mono);font-size:11px;color:${isToday?'var(--accent)':'var(--text3)'}">${day}</div>
+      <div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${isToday?'var(--accent)':'var(--text3)'};border-radius:3px;transition:width .5s"></div></div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);width:34px;text-align:right">${mins>0?fmtMinsShort(mins):''}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CRASH RECOVERY
+═══════════════════════════════════════════════════════════════ */
+let crashData = null;
+
+function saveCrash() {
+  if (!tmr.running) return;
+  const d = {
+    subject: document.getElementById('curSubject')?.value || '',
+    topic: document.getElementById('curTopic')?.value || '',
+    type: document.getElementById('curType')?.value || 'General',
+    startTime: tmr.sessionStart ? tmr.sessionStart.toISOString() : new Date().toISOString(),
+    elapsed: tmr.elapsed,
+    profile: currentProfile
+  };
+  localStorage.setItem(storageKey + '_crash', JSON.stringify(d));
+}
+
+function checkCrash() {
+  const raw = localStorage.getItem(storageKey + '_crash');
+  if (!raw) return;
+  try {
+    crashData = JSON.parse(raw);
+    document.getElementById('recoveryBanner').style.display = 'flex';
+  } catch(e) {}
+}
+
+function restoreCrash() {
+  if (!crashData) return;
+  const mins = Math.floor(crashData.elapsed / 60);
+  if (mins < 1) { dismissCrash(); return; }
+  pendS.durationMinutes = mins;
+  pendS.subject = crashData.subject;
+  pendS.topic = crashData.topic;
+  pendS.type = crashData.type;
+  pendS.startTime = crashData.startTime;
+  document.getElementById('sm_subject').value = crashData.subject || '';
+  document.getElementById('sm_topic').value = crashData.topic || '';
+  openModal('sessionModal');
+  dismissCrash();
+}
+
+function dismissCrash() {
+  localStorage.removeItem(storageKey + '_crash');
+  document.getElementById('recoveryBanner').style.display = 'none';
+  crashData = null;
+}
+
+setInterval(saveCrash, 30000);
+window.addEventListener('beforeunload', saveCrash);
+
+/* ═══════════════════════════════════════════════════════════════
+   BADGES
+═══════════════════════════════════════════════════════════════ */
+const BADGES = [
+  { id:'first_session', icon:'🎯', name:'First Step', desc:'Complete 1 session' },
+  { id:'ten_sessions', icon:'🔟', name:'Ten Deep', desc:'Complete 10 sessions' },
+  { id:'fifty_sessions', icon:'💯', name:'Half Century', desc:'Complete 50 sessions' },
+  { id:'one_hour', icon:'⏰', name:'One Hour', desc:'Study 1 hour total' },
+  { id:'ten_hours', icon:'📚', name:'10 Hours', desc:'Study 10 hours total' },
+  { id:'fifty_hours', icon:'🏛', name:'Scholar', desc:'Study 50 hours total' },
+  { id:'streak_3', icon:'🔥', name:'On Fire', desc:'3-day streak' },
+  { id:'streak_7', icon:'⚡', name:'Weekly Warrior', desc:'7-day streak' },
+  { id:'streak_30', icon:'🌟', name:'Monthly Master', desc:'30-day streak' },
+  { id:'night_owl', icon:'🦉', name:'Night Owl', desc:'Study after 10pm' },
+  { id:'early_bird', icon:'🌅', name:'Early Bird', desc:'Study before 7am' },
+  { id:'five_subjects', icon:'🧠', name:'Polymath', desc:'Study 5+ subjects' },
+  { id:'perfect_focus', icon:'💎', name:'Perfect Focus', desc:'Rate 5/5 focus' },
+  { id:'task_master', icon:'✅', name:'Task Master', desc:'Complete 20 tasks' },
+  { id:'all_types', icon:'🎨', name:'Versatile', desc:'Use all session types' },
+  { id:'note_taker', icon:'📝', name:'Note Taker', desc:'Save 5 notes' },
+];
+
+function checkBadges() {
+  const s = pd().sessions;
+  const tasks = pd().tasks;
+  const earned = pd().earnedBadges || [];
+
+  const earn = (id) => { if (!earned.includes(id)) { earned.push(id); notify(`🏆 Badge unlocked: ${BADGES.find(b=>b.id===id)?.name}!`, 'success'); } };
+
+  const totalMins = s.reduce((a,x)=>a+x.durationMinutes,0);
+  if (s.length >= 1) earn('first_session');
+  if (s.length >= 10) earn('ten_sessions');
+  if (s.length >= 50) earn('fifty_sessions');
+  if (totalMins >= 60) earn('one_hour');
+  if (totalMins >= 600) earn('ten_hours');
+  if (totalMins >= 3000) earn('fifty_hours');
+  if ((pd().streak||0) >= 3) earn('streak_3');
+  if ((pd().streak||0) >= 7) earn('streak_7');
+  if ((pd().streak||0) >= 30) earn('streak_30');
+  if (s.some(x=>x.hour>=22)) earn('night_owl');
+  if (s.some(x=>x.hour<7)) earn('early_bird');
+  if (new Set(s.map(x=>x.subject)).size >= 5) earn('five_subjects');
+  if (s.some(x=>x.focusRating===5)) earn('perfect_focus');
+  if (tasks.filter(t=>t.done).length >= 20) earn('task_master');
+  const allTypes = ['Active Recall','Reading','Problem Solving','Revision','Lecture','Writing','Research'];
+  if (allTypes.every(t=>s.some(x=>x.type===t))) earn('all_types');
+  if ((pd().notes||[]).length >= 5) earn('note_taker');
+
+  pd().earnedBadges = earned;
+  saveState();
+}
+
+function renderBadges() {
+  const el = document.getElementById('badgesGrid');
+  if (!el) return;
+  const earned = pd().earnedBadges || [];
+  el.innerHTML = BADGES.map(b => `
+    <div class="badge ${earned.includes(b.id)?'earned':''}" title="${b.desc}">
+      <div class="badge-icon">${b.icon}</div>
+      <div class="badge-name">${b.name}</div>
+      <div class="badge-desc">${b.desc}</div>
+    </div>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GOALS & SETTINGS
+═══════════════════════════════════════════════════════════════ */
+function saveGoals() {
+  pd().goals.daily = parseInt(document.getElementById('g_daily').value)||120;
+  pd().goals.weekly = parseInt(document.getElementById('g_weekly').value)||600;
+  saveState(); refreshDashboard();
+  notify('Goals saved!', 'success');
+}
+
+function saveSettings() {
+  pd().settings.customFocus = parseInt(document.getElementById('s_focus').value)||45;
+  pd().settings.customBreak = parseInt(document.getElementById('s_break').value)||10;
+  saveState();
+  notify('Settings saved!', 'success');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SOUNDS
+═══════════════════════════════════════════════════════════════ */
+let audioCtx = null, activeSounds = {}, soundVol = 0.3;
+
+function getCtx() { return audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)(); }
+
+function toggleSound(type, btn) {
+  if (activeSounds[type]) {
+    activeSounds[type].forEach(n=>{try{n.stop()}catch(e){}});
+    delete activeSounds[type];
+    btn.classList.remove('active');
+  } else {
+    btn.classList.add('active');
+    playAmbient(type);
+  }
+}
+
+function playAmbient(type) {
+  const ctx = getCtx(); const nodes = [];
+  const noise = (dur=2, freq=800, gain=0.3) => {
+    const buf = ctx.createBuffer(1, ctx.sampleRate*dur, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i=0;i<data.length;i++) data[i]=(Math.random()*2-1)*0.5;
+    const src = ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+    const f = ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=freq;
+    const g = ctx.createGain(); g.gain.value=soundVol*gain;
+    src.connect(f); f.connect(g); g.connect(ctx.destination); src.start();
+    return src;
+  };
+  if (type==='rain') { nodes.push(noise(2,700,.4), noise(2,1200,.2), noise(2,400,.15)); }
+  else if (type==='fire') { nodes.push(noise(2,300,.35)); }
+  else if (type==='ocean') { nodes.push(noise(4,500,.4), noise(4,300,.2)); }
+  else if (type==='forest') { nodes.push(noise(3,2000,.15)); }
+  else if (type==='cafe') {
+    for (let i=0;i<4;i++) {
+      const o=ctx.createOscillator(); const g=ctx.createGain();
+      o.type='sine'; o.frequency.value=150+Math.random()*300;
+      g.gain.value=0; o.connect(g); g.connect(ctx.destination); o.start();
+      const m=()=>{const t=ctx.currentTime;g.gain.setTargetAtTime(soundVol*.02*Math.random(),t,.1);g.gain.setTargetAtTime(0,t+.3+Math.random()*.5,.1);setTimeout(m,500+Math.random()*1000)};
+      m(); nodes.push(o);
+    }
+  }
+  activeSounds[type] = nodes;
+}
+
+function setVol(v) { soundVol = parseFloat(v); }
+
+function beep() {
+  try {
+    const ctx=getCtx(); const o=ctx.createOscillator(); const g=ctx.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(880,ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+.3);
+    g.gain.setValueAtTime(.25,ctx.currentTime); g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.4);
+    o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime+.4);
+  } catch(e){}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EMBED
+═══════════════════════════════════════════════════════════════ */
+function loadEmbed() {
+  const url = document.getElementById('embedUrl').value.trim();
+  if (!url) return;
+  document.getElementById('embedBox').innerHTML = `<iframe src="${url}" width="100%" height="200" frameborder="0" allow="autoplay" style="border-radius:var(--radius-sm);border:1px solid var(--border)"></iframe>`;
+}
+function clearEmbed() { document.getElementById('embedBox').innerHTML=''; document.getElementById('embedUrl').value=''; }
+
+/* ═══════════════════════════════════════════════════════════════
+   ZEN MODE
+═══════════════════════════════════════════════════════════════ */
+function toggleZen() { document.getElementById('zenOv').classList.toggle('active'); updateZenTask(); }
+function updateZenTask() {
+  const topic = document.getElementById('curTopic').value || document.getElementById('curSubject').value || 'No task set';
+  document.getElementById('zenTask').textContent = topic;
+}
+document.addEventListener('keydown', e => { if(e.key==='Escape') document.getElementById('zenOv').classList.remove('active'); });
+
+/* ═══════════════════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS
+═══════════════════════════════════════════════════════════════ */
+let kbdHudVisible = false;
+document.addEventListener('keydown', e => {
+  const tag = document.activeElement.tagName.toLowerCase();
+  if (['input','textarea','select'].includes(tag) || document.activeElement.contentEditable==='true') return;
+  if (e.code==='Space') { e.preventDefault(); toggleTimer(); }
+  if (e.key.toLowerCase()==='s') stopTimer();
+  if (e.key.toLowerCase()==='z') toggleZen();
+  if (e.key.toLowerCase()==='m') openModal('manualModal');
+  if (e.key==='?') {
+    kbdHudVisible = !kbdHudVisible;
+    document.getElementById('kbdHud').classList.toggle('show', kbdHudVisible);
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   THEME
+═══════════════════════════════════════════════════════════════ */
+const themes = ['dark','dim','light'];
+let themeIdx = 0;
+
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('focusTheme', t);
+  const icons = { dark:'🌑', dim:'🌘', light:'☀' };
+  document.getElementById('themeBtn').textContent = icons[t] || '☀';
+}
+
+function cycleTheme() {
+  themeIdx = (themeIdx+1) % themes.length;
+  setTheme(themes[themeIdx]);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════════════════════ */
+const PAGE_TITLES = {
+  dashboard:'Dashboard', log:'Study Log', tasks:'Tasks', notes:'Notes',
+  analytics:'Analytics', heatmap:'Calendar', badges:'Badges', subjects:'Subjects',
+  planner:'Planner', goals:'Goals', focus:'Focus Tools', settings:'Settings'
+};
+
+function nav(page, btn) {
+  document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  if (btn) btn.classList.add('active');
+  document.getElementById('pageTitle').textContent = PAGE_TITLES[page]||page;
+  if (window.innerWidth<=900) document.getElementById('sidebar').classList.remove('open');
+
+  if (page==='analytics') setTimeout(refreshAnalytics,50);
+  if (page==='heatmap') { refreshHeatmap(); }
+  if (page==='badges') renderBadges();
+  if (page==='goals') {
+    document.getElementById('g_daily').value = pd().goals.daily||120;
+    document.getElementById('g_weekly').value = pd().goals.weekly||600;
+  }
+  if (page==='settings') {
+    document.getElementById('s_focus').value = pd().settings.customFocus||45;
+    document.getElementById('s_break').value = pd().settings.customBreak||10;
+  }
+  if (page==='notes') renderNotes();
+}
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORT / IMPORT
+═══════════════════════════════════════════════════════════════ */
+function exportCSV() {
+  const rows = [['Date','Subject','Topic','Type','Duration','Focus','Energy','Productive','Notes','Manual']];
+  pd().sessions.forEach(s => rows.push([s.date,s.subject,s.topic,s.type||'General',s.durationMinutes,s.focusRating,s.energyRating,s.productiveMinutes,s.notes,s.manual?'yes':'no']));
+  dl('focus-sessions.csv', rows.map(r=>r.map(c=>`"${String(c||'').replace(/"/g,'""')}"`).join(',')).join('\n'), 'text/csv');
+}
+
+function exportJSON() { dl('focus-data.json', JSON.stringify({profiles,currentProfile},null,2),'application/json'); }
+
+function importJSON(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      if (d.profiles) { profiles = d.profiles; currentProfile = d.currentProfile||Object.keys(d.profiles)[0]; }
+      else if (d.sessions) { pd().sessions = d.sessions; }
+      saveState(); refreshAll();
+      notify('Data imported successfully!', 'success');
+    } catch(err) { notify('Import failed: invalid JSON', 'info'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function dl(name, content, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content],{type}));
+  a.download = name; a.click();
+}
+
+function clearAll() {
+  if (!confirm('Clear ALL data for current profile? Cannot be undone.')) return;
+  profiles[currentProfile] = blankProfile();
+  saveState(); refreshAll();
+  notify('Profile data cleared.', 'info');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANALYTICS & CHARTS
+═══════════════════════════════════════════════════════════════ */
+let charts = {};
+
+function refreshAnalytics() {
+  const last7 = [], labels = [];
+  for (let i=6;i>=0;i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    last7.push(d.toISOString().split('T')[0]);
+    labels.push(['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]);
+  }
+  const weekData = last7.map(d => pd().sessions.filter(s=>s.date===d).reduce((a,s)=>a+s.productiveMinutes,0));
+
+  rebuildChart('wChart','bar',{labels, datasets:[{label:'Productive Min',data:weekData,backgroundColor:'rgba(232,168,50,.55)',borderColor:'#e8a832',borderWidth:1,borderRadius:5}]}, chartOpts());
+
+  const subTotals = {};
+  pd().sessions.forEach(s => { subTotals[s.subject||'General'] = (subTotals[s.subject||'General']||0)+s.durationMinutes; });
+  const sNames = Object.keys(subTotals);
+  const sColors = ['#e8a832','#68a8e8','#6fcf87','#a868e8','#e86868','#68e8c8','#e8c168'];
+  if (sNames.length) {
+    rebuildChart('pChart','doughnut',{labels:sNames,datasets:[{data:sNames.map(n=>subTotals[n]),backgroundColor:sNames.map((_,i)=>sColors[i%sColors.length]),borderWidth:0}]},
+      {...chartOpts(),cutout:'62%',plugins:{legend:{position:'right',labels:{color:'#a09880',font:{family:'DM Mono',size:10},boxWidth:10}}}});
+  }
+
+  const last10 = pd().sessions.slice(-10);
+  rebuildChart('fChart','line',{
+    labels: last10.map((_,i)=>`#${i+1}`),
+    datasets:[
+      {label:'Focus',data:last10.map(s=>s.focusRating),borderColor:'#68a8e8',backgroundColor:'rgba(104,168,232,.1)',tension:.4,fill:true,pointRadius:3},
+      {label:'Energy',data:last10.map(s=>s.energyRating),borderColor:'#6fcf87',backgroundColor:'rgba(111,207,135,.1)',tension:.4,fill:true,pointRadius:3}
+    ]
+  }, {...chartOpts(), scales:{y:{min:0,max:5,...axisS()},x:axisS(true)}});
+
+  const typeTotals = {};
+  pd().sessions.forEach(s => { typeTotals[s.type||'General'] = (typeTotals[s.type||'General']||0)+s.durationMinutes; });
+  const tNames = Object.keys(typeTotals);
+  rebuildChart('tChart','bar',{
+    labels: tNames,
+    datasets:[{label:'Minutes',data:tNames.map(n=>typeTotals[n]),backgroundColor:'rgba(168,104,232,.55)',borderColor:'#a868e8',borderWidth:1,borderRadius:5}]
+  }, {...chartOpts(), indexAxis:'y'});
+
+  const byDay = {};
+  pd().sessions.forEach(s => { if(!byDay[s.date]) byDay[s.date]=[]; byDay[s.date].push(s); });
+  const days = Object.keys(byDay).sort().reverse();
+  const dr = document.getElementById('dailyReport');
+  if (dr) {
+    if (!days.length) { dr.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No data yet</div>'; return; }
+    dr.innerHTML = days.slice(0,30).map(d => {
+      const sess = byDay[d];
+      const mins = sess.reduce((a,s)=>a+s.durationMinutes,0);
+      const prod = sess.reduce((a,s)=>a+s.productiveMinutes,0);
+      const avgF = (sess.reduce((a,s)=>a+s.focusRating,0)/sess.length).toFixed(1);
+      const subjs = [...new Set(sess.map(s=>s.subject))].join(', ');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div><div style="font-size:13.5px;color:var(--text)">${d}</div><div style="font-size:11px;color:var(--text3)">${subjs}</div></div>
+        <div style="display:flex;gap:18px;text-align:right">
+          <div><div style="font-family:var(--font-mono);font-size:15px;color:var(--text)">${fmtMins(mins)}</div><div style="font-size:10px;color:var(--text3)">studied</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:15px;color:var(--accent)">${fmtMins(prod)}</div><div style="font-size:10px;color:var(--text3)">productive</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:15px;color:var(--blue)">${avgF}</div><div style="font-size:10px;color:var(--text3)">focus</div></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function rebuildChart(id, type, data, options) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  charts[id] = new Chart(canvas.getContext('2d'), { type, data, options });
+}
+
+function chartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1e1c19', titleColor: '#f0ead8', bodyColor: '#a09880', borderColor: '#2e2c28', borderWidth: 1 } },
+    scales: { y: axisS(), x: axisS(true) }
+  };
+}
+
+function axisS(x=false) {
+  return { grid:{ color:'rgba(90,85,72,.15)', drawBorder:false }, ticks:{ color:'#5a5548', font:{ family:'DM Mono', size:9 } }, border:{ display:false } };
+}
+
+function refreshHeatmap() {
+  const hm = document.getElementById('heatmap');
+  if (!hm) return;
+  hm.innerHTML = '';
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const start = new Date(today);
+  start.setDate(today.getDate() - 52*7);
+  const dow = (start.getDay()+6)%7;
+  start.setDate(start.getDate() - dow);
+
+  const dayMap = {};
+  pd().sessions.forEach(s => { dayMap[s.date] = (dayMap[s.date]||0) + s.durationMinutes; });
+
+  const maxMins = Math.max(...Object.values(dayMap), 1);
+  const numWeeks = Math.ceil((today - start) / (7*86400000)) + 1;
+
+  for (let w = 0; w < numWeeks; w++) {
+    const col = document.createElement('div');
+    col.className = 'hm-col';
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + w*7 + d);
+      if (date > today) { const spacer=document.createElement('div'); spacer.style.width='13px'; spacer.style.height='13px'; col.appendChild(spacer); continue; }
+      const key = date.toISOString().split('T')[0];
+      const mins = dayMap[key] || 0;
+      let lvl = 0;
+      if (mins > 0) lvl = mins < maxMins*0.25 ? 1 : mins < maxMins*0.5 ? 2 : mins < maxMins*0.75 ? 3 : 4;
+      const cell = document.createElement('div');
+      cell.className = `hm-cell${lvl?' l'+lvl:''}`;
+      cell.setAttribute('data-tip', `${key}: ${fmtMins(mins)}`);
+      col.appendChild(cell);
+    }
+    hm.appendChild(col);
+  }
+
+  const daysEl = document.getElementById('hmDays');
+  if (daysEl) {
+    daysEl.innerHTML = ['Mo','','We','','Fr','','Su'].map(l =>
+      `<div class="hm-day-label">${l}</div>`).join('');
+  }
+
+  let longestStrk = 0, curStrk = 0, prevDate = null;
+  const allDays = Object.keys(dayMap).sort();
+  allDays.forEach(d => {
+    if (prevDate) {
+      const diff = Math.floor((new Date(d) - new Date(prevDate))/86400000);
+      if (diff === 1) curStrk++;
+      else curStrk = 1;
+    } else curStrk = 1;
+    if (curStrk > longestStrk) longestStrk = curStrk;
+    prevDate = d;
+  });
+
+  const bestDay = allDays.length ? allDays.reduce((a,b)=>(dayMap[a]||0)>(dayMap[b]||0)?a:b) : null;
+  sEl('bestDay', bestDay ? `${bestDay} (${fmtMins(dayMap[bestDay])})` : '—');
+  sEl('longestStreak', longestStrk + ' days');
+
+  const weekSet = new Set();
+  allDays.forEach(d => { const dt=new Date(d); const wk=dt.getFullYear()+'W'+Math.floor((dt-new Date(dt.getFullYear(),0,1))/(7*86400000)); weekSet.add(wk); });
+  sEl('activeWeeks', weekSet.size);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REFRESH ALL
+═══════════════════════════════════════════════════════════════ */
+function refreshAll() {
+  refreshSubjectDrops();
+  refreshDashboard();
+  refreshTasks();
+  refreshSubjects();
+  refreshExams();
+  refreshLinks();
+  refreshLog();
+  refreshWeekPlanner();
+  renderBadges();
+  renderNotes();
+  document.getElementById('streakNum').textContent = pd().streak||0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PROFILE SELECT (simplified)
+═══════════════════════════════════════════════════════════════ */
+function renderProfileSelect() {
+  const sel = document.getElementById('profileSelect');
+  sel.innerHTML = Object.keys(profiles).map(p =>
+    `<option value="${esc(p)}" ${p === currentProfile ? 'selected' : ''}>${esc(p)}</option>`
+  ).join('');
+}
+
+function switchProfile(name) {
+  if (!profiles[name]) return;
+  currentProfile = name;
+  saveState();
+  refreshAll();
+  notify(`Switched to "${name}"`, 'info');
+}
+
+function saveProfile() {
+  const name = document.getElementById('np_name').value.trim();
+  if (!name) return;
+  if (!profiles[name]) profiles[name] = blankProfile();
+  currentProfile = name;
+  saveState();
+  closeModal('addProfileModal');
+  renderProfileSelect();
+  refreshAll();
+  notify(`Profile "${name}" created!`, 'success');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLOCK + QUOTES
+═══════════════════════════════════════════════════════════════ */
+const QUOTES = [
+  "The secret of getting ahead is getting started.",
+  "It always seems impossible until it's done.",
+  "Focus on being productive instead of busy.",
+  "One step at a time is all it takes.",
+  "You don't have to be great to start, but you have to start to be great.",
+  "Study hard, for the well is deep, and our brains are shallow.",
+  "The more that you read, the more things you will know.",
+  "Education is the passport to the future.",
+  "An investment in knowledge pays the best interest.",
+  "The beautiful thing about learning is that no one can take it away from you.",
+  "Push yourself, because no one else is going to do it for you.",
+  "Great things never come from comfort zones.",
+  "Dream it. Wish it. Do it.",
+];
+let quoteIdx = Math.floor(Math.random() * QUOTES.length);
+
+function updateClock() {
+  const n = new Date();
+  const t = `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+  const el = document.getElementById('topClock'); if (el) el.textContent = t;
+  const ze = document.getElementById('zenClock'); if (ze) ze.textContent = t;
+}
+
+function rotateQuote() {
+  quoteIdx = (quoteIdx+1) % QUOTES.length;
+  const el = document.getElementById('quoteStrip');
+  if (el) { el.style.opacity='0'; setTimeout(()=>{ el.textContent='"'+QUOTES[quoteIdx]+'"'; el.style.opacity='1'; },400); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════════════════ */
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtMins(m) { if(m<60) return m+'m'; return Math.floor(m/60)+'h '+(m%60)+'m'; }
+function fmtMinsShort(m) { if(m<60) return m+'m'; return Math.floor(m/60)+'h'; }
+function fmtDate(s) { if(!s) return ''; try { const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(e){return s;} }
+function sEl(id, val) { const e=document.getElementById(id); if(e) e.textContent=val; }
+function styleEl(id, css) { const e=document.getElementById(id); if(e) e.style.cssText+= ';'+css; }
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+document.querySelectorAll('.modal-ov').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('active'); }));
+
+function notify(msg, type='info') {
+  const el=document.getElementById('notif');
+  el.textContent=msg; el.className='notif '+type+' show';
+  clearTimeout(window._notifT);
+  window._notifT = setTimeout(()=>el.classList.remove('show'),3200);
+}
+</script>
+</body>
+</html>
