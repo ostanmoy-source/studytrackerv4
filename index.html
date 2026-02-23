@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Focus — Sign In</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #0e0d0b;
+    --bg2:     #161512;
+    --bg3:     #1e1c19;
+    --border:  #2e2c28;
+    --text:    #f0ead8;
+    --text2:   #a09880;
+    --text3:   #5a5548;
+    --accent:  #e8a832;
+    --accent2: #c47f15;
+    --accent-dim: rgba(232,168,50,0.1);
+    --accent-glow: rgba(232,168,50,0.25);
+    --green:   #6fcf87;
+  }
+
+  html, body {
+    height: 100%;
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* Animated background */
+  .bg-orbs {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  }
+  .orb {
+    position: absolute; border-radius: 50%;
+    filter: blur(80px); animation: orbFloat 12s ease-in-out infinite;
+  }
+  .orb-1 {
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(232,168,50,0.08), transparent 70%);
+    top: -100px; left: -100px; animation-delay: 0s;
+  }
+  .orb-2 {
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(104,168,232,0.06), transparent 70%);
+    bottom: -100px; right: -100px; animation-delay: -4s;
+  }
+  .orb-3 {
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, rgba(111,207,135,0.04), transparent 70%);
+    top: 50%; left: 50%; transform: translate(-50%,-50%); animation-delay: -8s;
+  }
+  @keyframes orbFloat {
+    0%, 100% { transform: translate(0,0) scale(1); }
+    33% { transform: translate(30px,-20px) scale(1.05); }
+    66% { transform: translate(-20px,30px) scale(0.95); }
+  }
+
+  /* Noise texture */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 1; opacity: 0.35;
+  }
+
+  .page {
+    position: relative; z-index: 2;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+
+  .login-card {
+    width: 100%; max-width: 420px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px 36px;
+    position: relative;
+    overflow: hidden;
+    animation: cardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Top gradient line */
+  .login-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.6;
+  }
+
+  /* Corner glow */
+  .login-card::after {
+    content: '';
+    position: absolute; top: -60px; right: -60px;
+    width: 200px; height: 200px;
+    background: radial-gradient(circle, var(--accent-glow), transparent 70%);
+    pointer-events: none;
+  }
+
+  .brand {
+    margin-bottom: 32px;
+  }
+
+  .brand-name {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+    line-height: 1;
+    margin-bottom: 6px;
+    text-shadow: 0 0 30px var(--accent-glow);
+  }
+
+  .brand-tagline {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .login-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .login-sub {
+    font-size: 13.5px;
+    color: var(--text2);
+    margin-bottom: 28px;
+    line-height: 1.5;
+  }
+
+  /* Form */
+  .form-label {
+    display: block;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text3);
+    margin-bottom: 6px;
+  }
+
+  .email-input {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    padding: 12px 14px;
+    outline: none;
+    transition: all 0.2s;
+    margin-bottom: 14px;
+  }
+
+  .email-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .email-input::placeholder { color: var(--text3); }
+
+  .btn-magic {
+    width: 100%;
+    background: var(--accent);
+    color: #0e0d0b;
+    border: none;
+    border-radius: 100px;
+    padding: 13px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    letter-spacing: 0.2px;
+  }
+
+  .btn-magic:hover {
+    background: var(--accent2);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px var(--accent-glow);
+  }
+
+  .btn-magic:active { transform: translateY(0); }
+  .btn-magic:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  /* States */
+  .msg-box {
+    display: none;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+  .msg-box.success {
+    display: block;
+    background: rgba(111,207,135,0.1);
+    border: 1px solid rgba(111,207,135,0.3);
+    color: var(--green);
+  }
+  .msg-box.error {
+    display: block;
+    background: rgba(232,104,104,0.1);
+    border: 1px solid rgba(232,104,104,0.3);
+    color: #e86868;
+  }
+
+  .divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 22px 0;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+  .divider-text {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  .btn-sso {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    color: var(--text2);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    margin-bottom: 8px;
+  }
+  .btn-sso:hover { border-color: var(--text3); color: var(--text); background: var(--bg3); }
+
+  .footer-note {
+    margin-top: 24px;
+    font-size: 12px;
+    color: var(--text3);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .footer-note a {
+    color: var(--text2);
+    text-decoration: none;
+    border-bottom: 1px solid var(--border);
+    transition: color 0.2s;
+  }
+  .footer-note a:hover { color: var(--accent); }
+
+  /* Features strip */
+  .features {
+    display: flex; gap: 0;
+    margin-top: 28px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+  }
+  .feature {
+    flex: 1; text-align: center; padding: 0 8px;
+  }
+  .feature:not(:last-child) {
+    border-right: 1px solid var(--border);
+  }
+  .feature-icon { font-size: 18px; margin-bottom: 4px; }
+  .feature-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    line-height: 1.4;
+  }
+
+  /* Loading overlay */
+  .loading-ov {
+    display: none;
+    position: fixed; inset: 0;
+    background: var(--bg);
+    z-index: 100;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+  }
+  .loading-ov.show { display: flex; }
+  .loader {
+    width: 36px; height: 36px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-orbs">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+</div>
+
+<div class="loading-ov" id="loadingOv">
+  <div class="loader"></div>
+  <div class="loading-text">Signing you in…</div>
+</div>
+
+<div class="page">
+  <div class="login-card">
+
+    <div class="brand">
+      <div class="brand-name">Focus</div>
+      <div class="brand-tagline">Personal Study Tracker</div>
+    </div>
+
+    <div class="login-title">Welcome back</div>
+    <div class="login-sub">Enter your email and we'll send you a magic link — no password needed.</div>
+
+    <div class="msg-box" id="msgBox"></div>
+
+    <label class="form-label" for="emailInput">Email address</label>
+    <input
+      type="email"
+      class="email-input"
+      id="emailInput"
+      placeholder="you@example.com"
+      autocomplete="email"
+      onkeypress="if(event.key==='Enter') sendMagicLink()"
+    >
+
+    <button class="btn-magic" id="magicBtn" onclick="sendMagicLink()">
+      <span>✉</span> Send Magic Link
+    </button>
+
+    <div class="divider"><span class="divider-text">or</span></div>
+
+    <button class="btn-sso" onclick="loginWithProvider('google')">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continue with Google
+    </button>
+
+    <button class="btn-sso" onclick="loginWithProvider('github')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--text2)"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      Continue with GitHub
+    </button>
+
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-label">Pomodoro Timer</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📊</div>
+        <div class="feature-label">Analytics</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🏅</div>
+        <div class="feature-label">Badges</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🌐</div>
+        <div class="feature-label">Public Profile</div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      By signing in you agree to our
+      <a href="#">Terms</a> &amp; <a href="#">Privacy Policy</a>.<br>
+      Your private data is stored securely on your device.
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ── Netlify Identity ──
+  const netlifyIdentity = window.netlifyIdentity;
+
+  // If already logged in, go straight to app
+  netlifyIdentity.on('init', user => {
+    if (user) goToApp();
+  });
+
+  netlifyIdentity.on('login', user => {
+    goToApp();
+  });
+
+  netlifyIdentity.init();
+
+  function goToApp() {
+    document.getElementById('loadingOv').classList.add('show');
+    window.location.href = '/app.html';
+  }
+
+  // ── Magic Link ──
+  function sendMagicLink() {
+    const email = document.getElementById('emailInput').value.trim();
+    const btn   = document.getElementById('magicBtn');
+    const msg   = document.getElementById('msgBox');
+
+    // Clear previous
+    msg.className = 'msg-box';
+    msg.textContent = '';
+
+    if (!email || !isValidEmail(email)) {
+      showMsg('Please enter a valid email address.', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+
+    // Use Netlify Identity signup/login flow (magic link)
+    netlifyIdentity.open('signup');
+
+    // Pre-fill email field in the widget after it opens
+    setTimeout(() => {
+      const emailFields = document.querySelectorAll('.netlify-identity-widget input[type="email"]');
+      emailFields.forEach(f => f.value = email);
+    }, 500);
+
+    // Also try direct API approach
+    fetch('/.netlify/identity/magiclink', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    })
+    .then(r => {
+      if (r.ok || r.status === 422) {
+        // 422 = already exists, still sends link
+        btn.disabled = false;
+        btn.innerHTML = '<span>✉</span> Send Magic Link';
+        showMsg(`✓ Magic link sent to ${email}! Check your inbox and click the link to sign in.`, 'success');
+      } else {
+        return r.json().then(d => { throw new Error(d.msg || 'Failed to send link'); });
+      }
+    })
+    .catch(err => {
+      // Fallback: open Netlify Identity widget directly
+      btn.disabled = false;
+      btn.innerHTML = '<span>✉</span> Send Magic Link';
+      netlifyIdentity.open('signup');
+    });
+  }
+
+  // ── OAuth ──
+  function loginWithProvider(provider) {
+    netlifyIdentity.open('login');
+  }
+
+  // ── Helpers ──
+  function showMsg(text, type) {
+    const msg = document.getElementById('msgBox');
+    msg.textContent = text;
+    msg.className = 'msg-box ' + type;
+  }
+
+  function isValidEmail(e) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  }
+
+  // Handle magic link token in URL (when user clicks link in email)
+  if (window.location.hash.includes('confirmation_token') ||
+      window.location.hash.includes('access_token') ||
+      window.location.hash.includes('recovery_token')) {
+    document.getElementById('loadingOv').classList.add('show');
+    netlifyIdentity.on('login', () => goToApp());
+  }
+</script>
+</body>
+</html>
