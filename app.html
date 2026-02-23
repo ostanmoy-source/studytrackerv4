@@ -1195,7 +1195,7 @@ function getUserInitials(name, email) {
 /* ═══════════════════════════════════════════════
    STATE — keyed by user
 ═══════════════════════════════════════════════ */
-let state = null;
+var state = null;
 
 function blankState() {
   return {
@@ -1804,7 +1804,7 @@ function setTheme(t){document.documentElement.setAttribute('data-theme',t);local
 function cycleTheme(){themeIdx=(themeIdx+1)%themes.length;setTheme(themes[themeIdx]);}
 
 /* ─── NAVIGATION ─── */
-const PAGE_TITLES={dashboard:'Dashboard',log:'Study Log',tasks:'Tasks',notes:'Notes',analytics:'Analytics',heatmap:'Calendar',badges:'Badges',subjects:'Subjects',planner:'Planner',goals:'Goals',focus:'Focus Tools',profile:'My Profile',lounge:'Study Lounge',settings:'Settings'};
+var PAGE_TITLES={dashboard:'Dashboard',log:'Study Log',tasks:'Tasks',notes:'Notes',analytics:'Analytics',heatmap:'Calendar',badges:'Badges',subjects:'Subjects',planner:'Planner',goals:'Goals',focus:'Focus Tools',profile:'My Profile',lounge:'Study Lounge',settings:'Settings'};
 function nav(page,btn){
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
@@ -1842,7 +1842,7 @@ setInterval(updateClock,1000);setInterval(rotateQuote,30000);updateClock();
    FIREBASE CHAT — STUDY LOUNGE
 ═══════════════════════════════════════════════ */
 let db = null;
-let firebaseReady = false;
+var firebaseReady = false;
 let mutedUsers = JSON.parse(localStorage.getItem('focus_muted')||'[]');
 let unreadCount = 0;
 let loungeVisible = false;
